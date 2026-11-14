@@ -149,9 +149,13 @@ local function releaseOrphans(
 end
 
 function EscapeService.start(): Service
+	-- O mapa é só o container visual. Se ele não existir, criamos um — o
+	-- serviço nunca deve derrubar o servidor por causa de uma pasta ausente
+	-- (era o que acontecia quando o MapBuilder falhava).
 	local map = Workspace:FindFirstChild("TerrorMap")
 	if not map then
-		error("[EscapeService] TerrorMap não existe; o MapBuilder precisa rodar antes.")
+		warn("[EscapeService] TerrorMap ausente; criando um para pendurar o objetivo.")
+		map = MapBuilder.ensureFolder(Workspace, "TerrorMap")
 	end
 
 	local existing = map:FindFirstChild("ObjetivoFuga")
@@ -159,9 +163,7 @@ function EscapeService.start(): Service
 		existing:Destroy()
 	end
 
-	local folder = Instance.new("Folder")
-	folder.Name = "ObjetivoFuga"
-	folder.Parent = map
+	local folder = MapBuilder.ensureFolder(map, "ObjetivoFuga")
 
 	local remoteFolder = ReplicatedStorage:FindFirstChild(Remotes.FOLDER_NAME) :: Folder
 

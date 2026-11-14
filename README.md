@@ -136,17 +136,25 @@ corrida completa de estamina e **todo o fluxo da fuga**: 5 fusíveis, limite de
 1 na mão, barra de 3 s, cancelamento por distância, abertura do portão, vitória,
 devolução de fusível e co-op.
 
-Há ainda dois testes estruturais (Python, sem dependências):
+Há ainda testes estruturais (Python, sem dependências) e um teste que executa
+o `MapBuilder` de verdade:
 
 ```bash
 python3 tests/check_requires.py   # todo require() aponta para um caminho real
 python3 tests/check_scope.py      # nenhuma `local function` chamada antes de existir
+node tests/test_mapbuilder.mjs    # carrega o MapBuilder contra um stub do Roblox
 ```
 
 - **`check_requires`** confere cada `require` contra a árvore gerada pelo
   `default.project.json`.
 - **`check_scope`** acha `local function` chamada antes da declaração — em Luau
   isso vira `nil` em tempo de execução e o compilador não avisa.
+- **`test_mapbuilder`** roda o módulo real contra um stub mínimo do Roblox
+  (`tests/support/roblox_stub.luau`) em 7 cenários: tudo presente, `Shared`
+  ausente, `Config` ausente dentro de `Shared`, Config incompleto, Config com
+  valores inválidos, Workspace com lixo de sessão antiga e `build(nil)`.
+  É o único tipo de teste que pega erro de **carregamento** de módulo — que foi
+  justamente o que derrubou o servidor no Studio.
 
 > Os testes já pegaram bugs reais: jogador preso em cansaço no limiar, waypoint
 > dentro de um pilar, a câmera "afundando" por compor o offset de bobbing a cada
@@ -158,6 +166,11 @@ python3 tests/check_scope.py      # nenhuma `local function` chamada antes de ex
 > `attempt to call a nil value`, e — o mais sutil — `{ campo = nil }` não
 > apaga uma chave em Lua, o que travava a **segunda** instalação de fusível com
 > "já está instalando".
+>
+> O `test_mapbuilder` também pegou um erro que eu tinha acabado de introduzir
+> ao escrever o fallback: `cfg()` era definida **antes** de `local Config`, então
+> `Config` dentro dela era o global `nil` e o módulo estourava em `attempt to
+> index nil`. Compilação e lint não acusam isso — só a execução.
 
 ## Notas de implementação
 
@@ -166,6 +179,12 @@ python3 tests/check_scope.py      # nenhuma `local function` chamada antes de ex
   propriedades — `UDim2` e `NumberSequence` não são suportados.
 - **O mapa é construído em runtime** (`MapBuilder`), o que mantém a geometria
   junto do `Config.luau` e permite validar waypoints nos testes.
+- **`MapBuilder` nunca derruba o servidor.** Se `ReplicatedStorage.Shared.Config`
+  não existir (Rojo desconectado, projeto desatualizado), ele usa um Config
+  embutido e segue com um `warn`; se uma pasta estiver faltando ou tiver a
+  classe errada, `ensureFolder`/`ensureChild` criam ou substituem na hora. Um
+  cenário feio é melhor do que um servidor que não sobe. `MapBuilder.reloadConfig()`
+  reavalia tudo, então dá para reconectar o Rojo sem reiniciar.
 - **Nada de `init.*.luau`**: esse nome faz a pasta virar o próprio Script no
   Rojo (e em Windows/macOS pode ser confundido com o nome reservado).
 - **Os fusíveis nascem em runtime** e são sorteados com `FuseSpawner`, que

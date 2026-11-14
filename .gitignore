@@ -22,3 +22,7 @@ Thumbs.db
 
 # Testes
 tests/bundle.luau
+
+# Dependências dos testes (npm install @luau-rs/luau)
+/node_modules/
+/package-lock.json

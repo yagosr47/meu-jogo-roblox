@@ -5,15 +5,172 @@
 -- Fica no código (e não no default.project.json) porque o Resolver do Rojo 7
 -- não suporta UDim2/NumberSequence para propriedades complexas — e porque
 -- mantém a geometria junto do Config.
+--
+-- REGRA DE OURO DESTE MÓDULO: **nada aqui pode derrubar o servidor.**
+-- Se uma pasta, objeto ou serviço não existir, é criado na hora. Se o
+-- `ReplicatedStorage.Shared` não estiver presente (Rojo desconectado, projeto
+-- desatualizado), usamos o Config embutido e seguimos com um aviso — um
+-- cenário feio é infinitamente melhor do que um servidor que não sobe.
 
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local Config = require(ReplicatedStorage.Shared.Config)
-
 local MapBuilder = {}
+
+-- ======================================================================
+-- Config: resolução tolerante
+-- ======================================================================
+
+--- Valores de emergência, usados SÓ se `ReplicatedStorage.Shared.Config`
+--- não estiver disponível. Espelham os campos que este módulo lê.
+local FALLBACK_CONFIG = {
+	MAP_FLOOR_SIZE = 120,
+	MAP_WALL_HEIGHT = 16,
+	MAP_WALL_THICKNESS = 2,
+	MAP_LIGHT_COUNT = 6,
+	MAP_LIGHT_BRIGHTNESS = 1.2,
+	MAP_LIGHT_RANGE = 34,
+	FALLBACK_PICKUP_POINTS = 10,
+}
+
+--- Procura o módulo Config sem estourar se a pasta `Shared` não existir.
+---
+--- `require` de um caminho inexistente lança erro em tempo de carregamento e
+--- derruba o módulo inteiro (era assim que o servidor não subia). Aqui a
+--- ausência é tratada como um caso esperado.
+--- `WaitForChild` com timeout pode LANÇAR erro (e não só devolver nil),
+--- dependendo do contexto. Qualquer falha aqui significa "não achei".
+local function safeWaitForChild(parent: Instance, name: string, timeout: number): Instance?
+	local ok, result = pcall(function()
+		return parent:WaitForChild(name, timeout)
+	end)
+	return if ok then result else nil
+end
+
+local function resolveConfig(): (any, boolean)
+	local shared = ReplicatedStorage:FindFirstChild("Shared")
+
+	-- O Rojo pode ainda não ter replicado a pasta no primeiro instante.
+	if not shared then
+		shared = safeWaitForChild(ReplicatedStorage, "Shared", 10)
+	end
+
+	if not shared then
+		return FALLBACK_CONFIG, false
+	end
+
+	local configModule = shared:FindFirstChild("Config")
+	if not configModule then
+		configModule = safeWaitForChild(shared, "Config", 10)
+	end
+
+	if not configModule or not configModule:IsA("ModuleScript") then
+		return FALLBACK_CONFIG, false
+	end
+
+	local ok, result = pcall(require, configModule)
+	if not ok or type(result) ~= "table" then
+		warn("[MapBuilder] Config inválido, usando valores embutidos:", result)
+		return FALLBACK_CONFIG, false
+	end
+
+	return result, true
+end
+
+local Config, configResolved = resolveConfig()
+
+-- Constantes derivadas. São declaradas AQUI, antes de qualquer função que as
+-- leia ou escreva: em Luau, um `local` só é visível a partir da sua linha, e
+-- uma função definida antes enxergaria o global (nil) em vez do local.
+local FLOOR_SIZE = 0
+local WALL_HEIGHT = 0
+local WALL_THICKNESS = 0
+local LIGHT_COUNT = 0
+local LIGHT_BRIGHTNESS = 0
+local LIGHT_RANGE = 0
+local PICKUP_POINTS = 0
+
+--- Lê um número do Config, com fallback se a chave faltar ou for inválida.
+local function cfg(key: string, default: number): number
+	local value = (Config :: any)[key]
+	if type(value) == "number" and value == value then
+		return value
+	end
+	return default
+end
+
+--- Aplica os valores do Config nas constantes do módulo.
+local function applyConfig()
+	FLOOR_SIZE = cfg("MAP_FLOOR_SIZE", FALLBACK_CONFIG.MAP_FLOOR_SIZE)
+	WALL_HEIGHT = cfg("MAP_WALL_HEIGHT", FALLBACK_CONFIG.MAP_WALL_HEIGHT)
+	WALL_THICKNESS = cfg("MAP_WALL_THICKNESS", FALLBACK_CONFIG.MAP_WALL_THICKNESS)
+	LIGHT_COUNT = cfg("MAP_LIGHT_COUNT", FALLBACK_CONFIG.MAP_LIGHT_COUNT)
+	LIGHT_BRIGHTNESS = cfg("MAP_LIGHT_BRIGHTNESS", FALLBACK_CONFIG.MAP_LIGHT_BRIGHTNESS)
+	LIGHT_RANGE = cfg("MAP_LIGHT_RANGE", FALLBACK_CONFIG.MAP_LIGHT_RANGE)
+	PICKUP_POINTS = cfg("FALLBACK_PICKUP_POINTS", FALLBACK_CONFIG.FALLBACK_PICKUP_POINTS)
+end
+
+applyConfig()
+
+if not configResolved then
+	warn(
+		"[MapBuilder] ReplicatedStorage.Shared.Config não encontrado. "
+			.. "Seguindo com os valores embutidos — rode `rojo serve` e reconecte o plugin."
+	)
+end
+
+--- Reavalia os valores do Config (reexecutável).
+---
+--- Exportado por dois motivos: permite testar o caminho de fallback e permite
+--- recarregar caso o Rojo conecte DEPOIS que o servidor já subiu.
+function MapBuilder.reloadConfig(): boolean
+	local resolved, ok = resolveConfig()
+	Config = resolved
+	configResolved = ok
+	applyConfig()
+	return ok
+end
+
+--- `true` se o Config real foi encontrado (e não o embutido).
+function MapBuilder.hasRealConfig(): boolean
+	return configResolved
+end
+
+-- ======================================================================
+-- Helpers de criação tolerante
+-- ======================================================================
+
+--- Devolve o filho `name` de `parent`, criando-o se não existir.
+---
+--- Se existir com a classe errada, é substituído — usar um `Part` onde se
+--- espera uma `Folder` quebraria o `Parent = ` mais adiante.
+function MapBuilder.ensureChild(parent: Instance, name: string, className: string): Instance
+	local existing = parent:FindFirstChild(name)
+
+	if existing then
+		if existing.ClassName == className or existing:IsA(className) then
+			return existing
+		end
+
+		warn(`[MapBuilder] {parent:GetFullName()}.{name} era {existing.ClassName}, trocando por {className}.`)
+		existing:Destroy()
+	end
+
+	local created = Instance.new(className)
+	created.Name = name
+	created.Parent = parent
+	return created
+end
+
+--- Atalho para `ensureChild(..., "Folder")`.
+function MapBuilder.ensureFolder(parent: Instance, name: string): Folder
+	return MapBuilder.ensureChild(parent, name, "Folder") :: Folder
+end
+
+-- ======================================================================
+-- Geometria
+-- ======================================================================
 
 --- Geometria dos pilares (x, z, largura, profundidade). Somente leitura.
 MapBuilder.pillars = {
@@ -72,18 +229,26 @@ end
 --- faria os fusíveis ficarem inalcançáveis se alguém movesse um pilar.
 local PILLARS = MapBuilder.pillars
 
---- Monta o mapa (ou reaproveita, se já existir) e devolve as referências.
-function MapBuilder.build(parent: Instance): Map
-	local existing = parent:FindFirstChild("TerrorMap")
+-- ======================================================================
+-- Construção
+-- ======================================================================
+
+--- Monta o mapa (recriando sempre) e devolve as referências.
+---
+--- Nunca lança: `parent` inválido cai para o Workspace, e cada peça é criada
+--- do zero — não depende de nada preexistente no Workspace.
+function MapBuilder.build(parent: Instance?): Map
+	-- Sem container informado, usa o Workspace (nunca falha por causa disso).
+	local target: Instance = parent or Workspace
+
+	local existing = target:FindFirstChild("TerrorMap")
 	if existing then
 		existing:Destroy()
 	end
 
-	local folder = Instance.new("Folder")
-	folder.Name = "TerrorMap"
-	folder.Parent = parent
+	local folder = MapBuilder.ensureFolder(target, "TerrorMap")
 
-	local size = Config.MAP_FLOOR_SIZE
+	local size = FLOOR_SIZE
 
 	local floor = makePart({
 		Name = "Piso",
@@ -96,14 +261,14 @@ function MapBuilder.build(parent: Instance): Map
 	local ceiling = makePart({
 		Name = "Teto",
 		Size = Vector3.new(size, 2, size),
-		Position = Vector3.new(0, Config.MAP_WALL_HEIGHT + 1, 0),
+		Position = Vector3.new(0, WALL_HEIGHT + 1, 0),
 		Color = WALL_COLOR,
 		Material = Enum.Material.Concrete,
 	}, folder)
 
 	local half = size / 2
-	local thickness = Config.MAP_WALL_THICKNESS
-	local height = Config.MAP_WALL_HEIGHT
+	local thickness = WALL_THICKNESS
+	local height = WALL_HEIGHT
 
 	local walls = {
 		{ name = "ParedeNorte", size = Vector3.new(size, height, thickness), pos = Vector3.new(0, height / 2, -half) },
@@ -134,8 +299,10 @@ function MapBuilder.build(parent: Instance): Map
 
 	-- Luzes fracas e espaçadas: o suficiente para andar, não para se sentir
 	-- seguro. (A lanterna é que ilumina de verdade.)
-	for index = 1, Config.MAP_LIGHT_COUNT do
-		local angle = (index / Config.MAP_LIGHT_COUNT) * math.pi * 2
+	local lightCount = math.max(1, math.floor(LIGHT_COUNT))
+
+	for index = 1, lightCount do
+		local angle = (index / lightCount) * math.pi * 2
 		local radius = size * 0.3
 		local position = Vector3.new(math.cos(angle) * radius, height - 3, math.sin(angle) * radius)
 
@@ -150,8 +317,8 @@ function MapBuilder.build(parent: Instance): Map
 		holder.Parent = folder
 
 		local light = Instance.new("PointLight")
-		light.Brightness = Config.MAP_LIGHT_BRIGHTNESS
-		light.Range = Config.MAP_LIGHT_RANGE
+		light.Brightness = LIGHT_BRIGHTNESS
+		light.Range = LIGHT_RANGE
 		light.Color = Color3.fromRGB(255, 214, 170)
 		light.Shadows = true
 		light.Parent = holder
@@ -170,18 +337,24 @@ function MapBuilder.build(parent: Instance): Map
 
 	-- Pontos válidos para as pilhas: espalhados e longe das paredes.
 	local pickupPoints: { Vector3 } = {}
-	for index = 1, Config.FALLBACK_PICKUP_POINTS do
-		local angle = (index / Config.FALLBACK_PICKUP_POINTS) * math.pi * 2 + 0.4
+	local pointCount = math.max(1, math.floor(PICKUP_POINTS))
+
+	for index = 1, pointCount do
+		local angle = (index / pointCount) * math.pi * 2 + 0.4
 		local radius = half * 0.72
 		table.insert(pickupPoints, Vector3.new(math.cos(angle) * radius, 1.5, math.sin(angle) * radius))
 	end
 
-	-- Marca como principal o spawn do mapa.
-	for _, descendant in Workspace:GetDescendants() do
-		if descendant:IsA("SpawnLocation") and descendant ~= spawn then
-			descendant.Enabled = false
+	-- Nada de outro SpawnLocation ativo no mapa (senão o jogador nasce fora).
+	-- `pcall` porque GetDescendants pode falhar se o Workspace estiver sendo
+	-- modificado no mesmo instante.
+	pcall(function()
+		for _, descendant in Workspace:GetDescendants() do
+			if descendant:IsA("SpawnLocation") and descendant ~= spawn then
+				descendant.Enabled = false
+			end
 		end
-	end
+	end)
 
 	return {
 		folder = folder,
@@ -189,6 +362,10 @@ function MapBuilder.build(parent: Instance): Map
 		pickupPoints = pickupPoints,
 	}
 end
+
+-- ======================================================================
+-- Atmosfera
+-- ======================================================================
 
 --- Aplica a atmosfera de terror no Lighting.
 ---
