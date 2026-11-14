@@ -2,69 +2,76 @@
   "name": "meu-jogo-roblox",
   "tree": {
     "$className": "DataModel",
+
     "ReplicatedStorage": {
       "Shared": {
         "$path": "src/shared"
       }
     },
+
     "ServerScriptService": {
       "Server": {
         "$path": "src/server"
       }
     },
+
     "StarterPlayer": {
+      "$properties": {
+        "CameraMode": "LockFirstPerson",
+        "CameraMaxZoomDistance": 0.5,
+        "CameraMinZoomDistance": 0.5,
+        "EnableMouseLockOption": false
+      },
       "StarterPlayerScripts": {
         "Client": {
           "$path": "src/client"
         }
+      },
+      "StarterCharacterScripts": {
+        "$className": "StarterCharacterScripts"
       }
     },
-    "Workspace": {
-      "Baseplate": {
-        "$className": "Part",
+
+    "Lighting": {
+      "$properties": {
+        "Ambient": [0.03, 0.03, 0.05],
+        "OutdoorAmbient": [0.08, 0.09, 0.12],
+        "Brightness": 0.4,
+        "GlobalShadows": true,
+        "ShadowSoftness": 0.7,
+        "ClockTime": 0,
+        "GeographicLatitude": 0,
+        "ExposureCompensation": -0.4,
+        "EnvironmentDiffuseScale": 0.08,
+        "EnvironmentSpecularScale": 0.04,
+        "FogColor": [0.04, 0.045, 0.06],
+        "FogStart": 8,
+        "FogEnd": 90
+      },
+      "Atmosphere": {
+        "$className": "Atmosphere",
         "$properties": {
-          "Anchored": true,
-          "Locked": true,
-          "Position": [
-            0,
-            -12,
-            240
-          ],
-          "Size": [
-            100,
-            24,
-            1200
-          ],
-          "Color": [
-            0.3,
-            0.32,
-            0.36
-          ],
-          "Material": "Slate",
-          "TopSurface": "Smooth",
-          "BottomSurface": "Smooth"
+          "Density": 0.42,
+          "Offset": 0.1,
+          "Color": [0.4, 0.42, 0.48],
+          "Decay": [0.16, 0.17, 0.2],
+          "Glare": 0,
+          "Haze": 3.2
         }
       }
     },
-    "Lighting": {
-      "$properties": {
-        "Ambient": [
-          0.12,
-          0.13,
-          0.16
-        ],
-        "OutdoorAmbient": [
-          0.35,
-          0.38,
-          0.45
-        ],
-        "Brightness": 2.5,
-        "GlobalShadows": true
-      }
-    },
+
     "SoundService": {
       "$properties": {
-        "RespectFilteringEnabled": true
+        "RespectFilteringEnabled": true,
+        "AmbientReverb": "Hallway"
+      }
+    },
+
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true,
+        "StreamingEnabled": false
       }
     }
   }

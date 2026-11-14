@@ -1,109 +1,133 @@
 # meu-jogo-roblox
 
-Projeto de Roblox com [Rojo](https://rojo.space) e o sistema de **Checkpoint / Corrida**.
+Jogo de terror em primeira pessoa feito em Luau + [Rojo](https://rojo.space).
 
-## O que o jogo faz
+## O que tem no jogo
 
-1. Ao entrar, o jogador nasce no **pad verde** ("StartPad").
-2. Ficando no pad (ou apertando **F**), começa um countdown de 3 segundos.
-3. Ao largar, o cronômetro começa. O jogador precisa passar por **5 checkpoints
-   em ordem**; o último é a linha de chegada.
-4. Quem chega tem o tempo registrado no ranking (top 10), que aparece no canto da
-   tela e é salvo no **DataStore** quando possível.
+**1. Atmosfera, iluminação e movimentação**
+- `Lighting` escuro, neblina densa (objeto `Atmosphere` com `Density 0.42` e `Haze 3.2`, declarado no `default.project.json`).
+- Câmera travada em primeira pessoa (`StarterPlayer.CameraMode = LockFirstPerson`).
+- **View bobbing**: balanço vertical/horizontal + leve inclinação ao andar, mais abertura de FOV ao correr.
+- **Sprint com Shift** + barra de estamina na tela.
+- **Respiração ofegante** quando a estamina está baixa (som procedural, sem asset externo).
+
+**2. Lanterna com bateria e pilhas**
+- Tecla **F**. A bateria é do servidor e vai caindo enquanto a luz está ligada.
+- Abaixo de **20%** a lanterna pisca; ao **zerar**, apaga e não liga mais.
+- Pilhas coletáveis espalhadas pelo mapa (`Workspace.BatteryPickups`) com `ProximityPrompt`, reposição automática, validação de distância e de ritmo no servidor.
+
+**3. IA do monstro**
+- Patrulha por pontos com `PathfindingService`.
+- Detecta por **linha de visão** (raycast com FOV) e por **som** (ouve quem está correndo de longe, quem anda só de perto).
+- Inicia perseguição com **música de tensão** no cliente, e ao encostar aplica **jumpscare** (tela + morte).
+- Toda detecção, movimento e dano rodam no servidor.
 
 ## Estrutura
 
-| Pasta no disco   | Onde aparece no Studio                        |
-| ---------------- | --------------------------------------------- |
-| `src/server`     | `ServerScriptService > Server`                |
-| `src/client`     | `StarterPlayer > StarterPlayerScripts > Client` |
-| `src/shared`     | `ReplicatedStorage > Shared`                  |
-
-Regras de nome do Rojo:
-
-- `*.server.luau` → `Script` (servidor)
-- `*.client.luau` → `LocalScript` (cliente)
-- `*.luau` → `ModuleScript`
-- ~~`init.*.luau`~~ — **evitado de propósito** (veja "Notas")
-
-### Arquivos
+| Disco | Studio |
+| --- | --- |
+| `src/server` | `ServerScriptService > Server` |
+| `src/client` | `StarterPlayer > StarterPlayerScripts > Client` |
+| `src/shared` | `ReplicatedStorage > Shared` |
 
 ```
 src/
 ├── server/
-│   ├── RaceServer.server.luau   -- entrada do servidor (start + loops)
-│   ├── RaceService.luau         -- estado por jogador + validação dos RemoteEvents
-│   ├── RaceServerLogic.luau     -- regras de progressão (testável sem Roblox)
-│   └── CourseBuilder.luau       -- cria pista, pad e checkpoints em runtime
+│   ├── TerrorServer.server.luau   -- entrada: mapa, remotes, serviços, loop
+│   ├── MapBuilder.luau            -- sala fechada, pilares, luzes, pontos
+│   ├── PlayerState.luau           -- estado autoritativo por jogador
+│   ├── FlashlightService.luau     -- lanterna + gerador de pilhas
+│   └── MonsterService.luau        -- patrulha, percepção, perseguição, captura
 ├── client/
-│   └── RaceClient.client.luau   -- HUD: cronômetro, progresso, ranking, avisos
+│   ├── Movement.client.luau       -- 1ª pessoa, bobbing, sprint, estamina, respiração
+│   ├── Flashlight.client.luau     -- luz (SpotLight), HUD de bateria, piscada
+│   ├── MonsterFx.client.luau      -- música de tensão, vinheta, jumpscare
+│   └── HudKit.luau                -- helpers de UI (a HUD é montada em código)
 └── shared/
-    ├── Config.luau              -- constantes (checkpoints, limites, geometria)
-    ├── RaceLogic.luau           -- regras puras + `evaluateClaim` (validação)
-    ├── LeaderboardStore.luau    -- ranking top 10, com sanitização
-    ├── Remotes.luau             -- criação/espera dos RemoteEvents
-    └── Models/RaceRemotes.model.json
+    ├── Config.luau                -- TODOS os números do jogo
+    ├── StaminaLogic.luau          -- regras de estamina (puro)
+    ├── FlashlightLogic.luau       -- regras de bateria/piscada (puro)
+    ├── MonsterAI.luau             -- percepção e decisão do monstro (puro)
+    └── Remotes.luau               -- nomes e criação dos RemoteEvents
 ```
 
 ## Como rodar
 
 ```bash
-rokit install   # instala o Rojo 7.7.1 fixado em rokit.toml
+rokit install   # Rojo 7.7.1 (fixado em rokit.toml)
 rojo serve
 ```
 
-No Studio: plugin do Rojo → **Connect**. O jogo monta a pista sozinho.
+No Studio: plugin do Rojo → **Connect**.
 
-Alternativa, sem live sync:
+Alternativa sem live sync:
 
 ```bash
 rojo build -o meu-jogo-roblox.rbxlx
 ```
 
-> **DataStore:** `Config.USE_DATASTORE = true` por padrão. Em Studio sem
-> "Enable Studio Access to API Services", o ranking funciona normalmente mas só
-> em memória (é emitido um aviso no Output). Para desligar de vez, mude para
-> `false`.
-
-## Segurança: o que é validado no servidor
-
-O cliente **nunca** é fonte de verdade. Ele só envia `RequestStart`,
-`ClaimCheckpoint(n)` e `CancelRace`; todo o resto é decidido no servidor
-(`RaceLogic.evaluateClaim`, coberto por testes):
-
-| Verificação | Como |
+### Controles
+| Tecla | Ação |
 | --- | --- |
-| Corrida existe e está valendo | `phase == "Running"` |
-| Jogador vivo e com personagem | `Humanoid.Health > 0` + `HumanoidRootPart` |
-| Índice do checkpoint é válido | inteiro, não-NaN, dentro de `1..total` |
-| Ordem dos checkpoints | `claimed == nextIndex` (pular etapa é recusado) |
-| **Distância real** | calculada no servidor com a posição do personagem (o cliente não informa posição) |
-| Tempo mínimo entre checkpoints | `MIN_SECONDS_PER_CHECKPOINT` |
-| Rajada de requisições | `MAX_CLAIMS_PER_WINDOW` por `CLAIM_WINDOW_SECONDS` |
-| Inundação de remotes | teto global por jogador (`MAX_REMOTE_CALLS_PER_SECOND`) |
-| Corrida expirada | `RACE_TIME_LIMIT` |
-| Largada no lugar certo | distância do pad medida no servidor |
-| Dados do DataStore | `LeaderboardStore.sanitizeEntries` (descarta nome/time inválidos) |
+| WASD | andar |
+| Shift | correr (gasta estamina) |
+| F | lanterna |
+| E | pegar pilha (ProximityPrompt) |
 
-Além disso: `onPlayerRemoving` limpa a sessão, e uma rede de segurança no loop
-do servidor fecha a corrida de quem chega ao checkpoint final sem claim.
+## Como a segurança é feita
+
+O cliente **nunca** é fonte de verdade. Ele só declara intenção; o servidor
+decide. As regras ficam em módulos puros (`src/shared`) justamente para serem
+testáveis sem Roblox.
+
+| Risco | Defesa |
+| --- | --- |
+| Cliente diz "estou correndo" sem estamina | Servidor checa `canSprint` e aplica `WalkSpeed` ele mesmo |
+| Cliente informa posição | Nunca usada: distância é medida com o `HumanoidRootPart` no servidor |
+| Cliente pega pilha de longe | `ProximityPrompt` + raio máximo conferido no servidor |
+| Farm de pilhas | Limite por minuto e reposição com atraso |
+| Spam de RemoteEvents | Rate limit por jogador e cooldown de toggle |
+| Cliente diz "o monstro não me viu" | Percepção (`raycast` + som) roda só no servidor |
+| Cliente diz "peguei o monstro" | Captura por distância no servidor, com cooldown |
+| Dados inválidos / NaN | Entradas normalizadas nas regras puras |
+| Morrer e ficar travado | `Died` limpa o estado "pego"; respawn devolve velocidade |
+
+O visual é decidido no servidor porque todas as funções de regra são
+**determinísticas**: a mesma função `getLightState(state, now)` roda nos dois
+lados, então o cliente desenha exatamente o que o servidor considera verdade.
 
 ## Testes
 
-As regras ficam em módulos puros (`RaceLogic`, `RaceServerLogic`,
-`LeaderboardStore`), sem Instâncias, para rodarem fora do Roblox. A suíte cobre
-73 casos: ordem, teleporte, índice forjado, NaN/string, rajada, expiração,
-ranking cheio, dados corrompidos do DataStore e uma corrida completa.
+As regras (estamina, bateria, IA e geometria do mapa) rodam no Luau real, fora
+do Roblox:
 
-## Notas
+```bash
+npm install @luau-rs/luau
+node tests/bundle.mjs
+node tests/run.mjs
+```
 
-- **Por que não `init.server.luau`?** O Rojo reserva esse nome: a pasta que o
-  contém passa a *ser* o script. Além disso, em Windows/macOS (case-insensitive)
-  `Init.server.luau` pode ser confundido com o nome reservado. Por isso os
-  entrypoints são `RaceServer.server.luau` e `RaceClient.client.luau`.
-- **Checkpoints em runtime:** as partes da pista não ficam no
-  `default.project.json`; o `CourseBuilder` as cria no `Workspace` ao iniciar.
-  Assim os números de configuração ficam em um só lugar (`Config.luau`).
-- **Baseplate:** o `default.project.json` inclui uma base abaixo da pista. Se você
-  usar o template padrão do Studio (com o `Baseplate` dele), apenas remova o nó
-  `Baseplate` do projeto para não duplicar.
+**104 asserções**, cobrindo: drenagem/regeneração/cansaço, recarga limitada ao
+espaço, piscada determinística, FOV/visão/audição do monstro, transições
+patrulha↔perseguição, captura com cooldown, waypoints fora de pilares e uma
+corrida completa de estamina.
+
+> Os testes já pegaram três bugs reais durante o desenvolvimento: jogador preso
+> em cansaço no limiar, waypoint dentro de um pilar, e a câmera "afundando"
+> por compor o offset de bobbing a cada frame.
+
+## Notas de implementação
+
+- **A HUD é montada em código**, não em `StarterGui` no projeto: o Resolver do
+  Rojo 7 só aceita números, strings, enums, `Vector3`/`Color3` e `CFrame` nas
+  propriedades — `UDim2` e `NumberSequence` não são suportados.
+- **O mapa é construído em runtime** (`MapBuilder`), o que mantém a geometria
+  junto do `Config.luau` e permite validar waypoints nos testes.
+- **Nada de `init.*.luau`**: esse nome faz a pasta virar o próprio Script no
+  Rojo (e em Windows/macOS pode ser confundido com o nome reservado).
+- **Sons procedurais**: os efeitos usam assets locais que acompanham o cliente
+  do Roblox (`rbxasset://sounds/...`), então não é preciso publicar áudio. Se
+  algum asset não existir na sua versão do cliente, o `pcall` ignora e o jogo
+  segue sem som.
+- **`Atmosphere` e névoa** estão declarados no projeto; o `MapBuilder` reforça
+  os valores em runtime e cria um `Atmosphere` só se faltar.
