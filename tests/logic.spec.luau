@@ -341,6 +341,369 @@ end
 check("pontos de pilha validos", origemOk == true)
 check("pelo menos 1 waypoint", #Config.MONSTER_WAYPOINTS >= 2)
 
+-- ======================================================================
+__log("== ESCAPE: estado inicial ==")
+local EscapeLogic = __require("EscapeLogic")
+local FuseSpawner = __require("FuseSpawner")
+
+local prog = EscapeLogic.newProgress()
+check("comeca sem fusivel na mao", EscapeLogic.holdingOf(prog, 1) == nil)
+check("comeca com 0 instalado", prog.installed == 0)
+check("precisa de FUSE_COUNT", prog.required == Config.FUSE_COUNT)
+check("portao fechado", prog.gateOpen == false)
+check("fase inicial", prog.phase == "NeedFuses")
+check("5 fusiveis (requisito do pedido)", Config.FUSE_COUNT == 5)
+
+__log("== ESCAPE: coleta ==")
+local fuse1 = EscapeLogic.newFuse(1)
+local v = EscapeLogic.canCollect(prog, fuse1, 42, 3, true)
+check("pode coletar perto", v.ok == true, v.reason)
+check("recusa longe", EscapeLogic.canCollect(prog, fuse1, 42, 999, true).ok == false)
+check("recusa morto", EscapeLogic.canCollect(prog, fuse1, 42, 3, false).ok == false)
+check("recusa fusivel inexistente", EscapeLogic.canCollect(prog, nil, 42, 3, true).ok == false)
+check("recusa distancia NaN", EscapeLogic.canCollect(prog, fuse1, 42, 0/0, true).ok == false)
+check("recusa distancia string", EscapeLogic.canCollect(prog, fuse1, 42, "3" :: any, true).ok == false)
+
+local holding = EscapeLogic.markCollected(prog, fuse1, 42)
+check("marca como coletado", fuse1.collected == true and fuse1.byUserId == 42)
+check("guardou na mao", EscapeLogic.holdingOf(holding, 42) == 1)
+
+-- REGRA PRINCIPAL: 1 fusivel por jogador
+local fuse2 = EscapeLogic.newFuse(2)
+local second = EscapeLogic.canCollect(holding, fuse2, 42, 3, true)
+check("nao carrega 2 fusiveis", second.ok == false, second.reason)
+check("fusivel ja coletado nao repete", EscapeLogic.canCollect(prog, fuse1, 42, 3, true).ok == false)
+
+-- outro jogador pode carregar ao mesmo tempo (o limite e' POR jogador)
+local outro = EscapeLogic.canCollect(holding, fuse2, 99, 3, true)
+check("outro jogador pode pegar outro fusivel", outro.ok == true, outro.reason)
+check("mesmo fusivel nao vai para duas maos", EscapeLogic.canCollect(holding, fuse1, 99, 3, true).ok == false)
+
+__log("== ESCAPE: instalacao (3s) ==")
+check("nao instala sem fusivel", EscapeLogic.canStartInstall(prog, 42, 3, 100, true).ok == false)
+check("pode comecar com fusivel", EscapeLogic.canStartInstall(holding, 42, 3, 100, true).ok == true)
+check("outro jogador nao instala a minha mao", EscapeLogic.canStartInstall(holding, 99, 3, 100, true).ok == false)
+check("recusa longe do gerador", EscapeLogic.canStartInstall(holding, 42, 999, 100, true).ok == false)
+
+local installing = EscapeLogic.beginInstall(holding, 42, 100)
+check("marcou instalando", installing.installingBy == 42)
+check("progresso 0 no inicio", EscapeLogic.installProgress(installing, 100) == 0)
+check("progresso ~0.5 em 1.5s", math.abs(EscapeLogic.installProgress(installing, 101.5) - 0.5) < 0.001)
+check("progresso 1 em 3s", EscapeLogic.installProgress(installing, 103) == 1)
+check("progresso nao passa de 1", EscapeLogic.installProgress(installing, 999) == 1)
+check("nao termina antes de 3s", EscapeLogic.canFinishInstall(installing, 42, 101, 3, true).ok == false)
+check("termina em 3s", EscapeLogic.canFinishInstall(installing, 42, 103, 3, true).ok == true)
+check("outro nao conclui a instalacao alheia", EscapeLogic.canFinishInstall(installing, 99, 103, 3, true).ok == false)
+check("tempo medido no servidor (NaN = 0)", EscapeLogic.installProgress(installing, 0/0) == 0)
+
+-- afastar cancela
+check("afastar pede cancelamento", EscapeLogic.shouldAbortInstall(installing, 100) == true)
+check("perto nao cancela", EscapeLogic.shouldAbortInstall(installing, 5) == false)
+local cancelled = EscapeLogic.cancelInstall(installing)
+check("cancelar zera progresso", cancelled.installingBy == nil and EscapeLogic.installProgress(cancelled, 200) == 0)
+check("cancelar mantem o fusivel na mao", EscapeLogic.holdingOf(cancelled, 42) == 1)
+
+__log("== ESCAPE: instalar os 5 ==")
+local state = EscapeLogic.newProgress()
+local fuses = {}
+for i = 1, Config.FUSE_COUNT do
+	fuses[i] = EscapeLogic.newFuse(i)
+end
+
+local JUMP = 7
+local now = 1000
+local allOk = true
+for i = 1, Config.FUSE_COUNT do
+	local f = fuses[i]
+	if not EscapeLogic.canCollect(state, f, JUMP, 2, true).ok then
+		allOk = false
+		__log("   falhou coleta do fusivel " .. i)
+		break
+	end
+	state = EscapeLogic.markCollected(state, f, JUMP)
+
+	now += 1
+	if not EscapeLogic.canStartInstall(state, JUMP, 2, now, true).ok then
+		allOk = false
+		__log("   falhou inicio da instalacao " .. i)
+		break
+	end
+	state = EscapeLogic.beginInstall(state, JUMP, now)
+
+	now += Config.FUSE_INSTALL_SECONDS
+	if not EscapeLogic.canFinishInstall(state, JUMP, now, 2, true).ok then
+		allOk = false
+		__log("   falhou fim da instalacao " .. i)
+		break
+	end
+	state = EscapeLogic.completeInstall(state, JUMP, now)
+end
+
+check("fluxo completo dos 5 fusiveis", allOk == true)
+check("instalou todos", state.installed == Config.FUSE_COUNT, state.installed)
+check("mao vazia no fim", EscapeLogic.holdingOf(state, JUMP) == nil)
+check("gerador completo", EscapeLogic.isComplete(state.installed) == true)
+check("portao aberto ao completar", state.gateOpen == true)
+check("fase pronto para sair", state.phase == "ReadyToExit", state.phase)
+check("nada restante", EscapeLogic.remaining(state.installed) == 0)
+check("nao instala mais que o necessario", EscapeLogic.canStartInstall(state, JUMP, 2, now + 10, true).ok == false)
+
+__log("== ESCAPE: portao e vitoria ==")
+local fresh = EscapeLogic.newProgress()
+check("portao fechado no inicio", EscapeLogic.isGateOpen(fresh) == false)
+local closedGate = EscapeLogic.canWin(fresh, 2, true)
+check("nao vence com portao fechado", closedGate.ok == false, closedGate.reason)
+
+-- o portao abre sozinho ao instalar o ultimo fusivel (sem acao extra)
+check("portao aberto ao completar o gerador", EscapeLogic.isGateOpen(state) == true)
+local opened = state
+
+check("vence perto do portao", EscapeLogic.canWin(opened, 5, true).ok == true)
+check("nao vence longe", EscapeLogic.canWin(opened, 999, true).ok == false)
+check("nao vence morto", EscapeLogic.canWin(opened, 5, false).ok == false)
+
+local finished = EscapeLogic.markFinished(opened, now)
+check("fase final", finished.phase == "Finished")
+check("nao vence duas vezes", EscapeLogic.canWin(finished, 5, true).ok == false)
+
+__log("== ESCAPE: payload da HUD ==")
+local payload = EscapeLogic.toPayload(installing, 42, 101.5)
+check("payload tem instalados", payload.installed == 0)
+check("payload tem total", payload.required == Config.FUSE_COUNT)
+check("payload tem progresso", math.abs(payload.installProgress - 0.5) < 0.001)
+check("payload tem fase", payload.phase == "NeedFuses")
+
+-- ======================================================================
+__log("== SPAWNER: fusiveis em pontos validos ==")
+-- Espelha a geometria do MapBuilder.
+local PILARES_SP = {
+	{ x = 20, z = 20, w = 10, d = 10 },
+	{ x = -22, z = 16, w = 8, d = 14 },
+	{ x = 26, z = -18, w = 14, d = 8 },
+	{ x = -18, z = -22, w = 10, d = 10 },
+	{ x = 2, z = 2, w = 12, d = 6 },
+}
+local halfMap = Config.MAP_FLOOR_SIZE / 2
+
+-- Obstáculos de PRODUÇÃO: pilares + o próprio gerador (que é sólido).
+local OBSTACULOS_PROD = {}
+for _, p in PILARES_SP do
+	table.insert(OBSTACULOS_PROD, p)
+end
+table.insert(OBSTACULOS_PROD, {
+	x = Config.GENERATOR_POSITION[1],
+	z = Config.GENERATOR_POSITION[3],
+	w = 8 + Config.GENERATOR_PADDING,
+	d = 6 + Config.GENERATOR_PADDING,
+})
+
+local mapOptions = {
+	halfSize = halfMap,
+	obstacles = OBSTACULOS_PROD,
+	spawn = { x = 0, y = 0, z = -halfMap + 12 },
+	generator = { x = Config.GENERATOR_POSITION[1], y = 0, z = Config.GENERATOR_POSITION[3] },
+	gate = { x = Config.EXIT_GATE_POSITION[1], y = 0, z = Config.EXIT_GATE_POSITION[3] },
+}
+
+-- gerador mutavel: simula outro mapa (o sorteio precisa ser generico)
+local genMoved = {
+	halfSize = halfMap,
+	obstacles = PILARES_SP,
+	spawn = { x = 0, y = 0, z = -halfMap + 12 },
+	generator = { x = 30, y = 0, z = 0 },
+	gate = { x = 0, y = 0, z = halfMap - 3 },
+}
+
+local seed = 0
+local function seeded(): number
+	seed = (seed * 1103515245 + 12345) % 2147483648
+	return seed / 2147483648
+end
+
+local pontos = FuseSpawner.roll(mapOptions, Config.FUSE_COUNT, seeded)
+check("sorteou a quantidade certa", #pontos == Config.FUSE_COUNT, #pontos)
+
+local validos, motivo = FuseSpawner.validate(pontos, mapOptions)
+check("todos os pontos sao validos", validos == true, motivo)
+
+-- nenhum dentro de pilar
+local dentroDePilar = 0
+for _, p in pontos do
+	if FuseSpawner.blocked(p.x, p.z, OBSTACULOS_PROD, 0) then
+		dentroDePilar += 1
+	end
+end
+check("nenhum dentro de pilar/gerador", dentroDePilar == 0, dentroDePilar)
+
+-- todos separados
+local muitoPerto = 0
+for i = 1, #pontos do
+	for j = i + 1, #pontos do
+		if FuseSpawner.distance2D(pontos[i], pontos[j]) < Config.FUSE_SPAWN_SEPARATION then
+			muitoPerto += 1
+		end
+	end
+end
+check("todos bem separados", muitoPerto == 0, muitoPerto)
+
+-- longe do gerador e do portao
+local pertoDoGerador = 0
+for _, p in pontos do
+	if FuseSpawner.distance2D(p, mapOptions.generator) < Config.FUSE_AVOID_GENERATOR then
+		pertoDoGerador += 1
+	end
+end
+check("nenhum colado no gerador", pertoDoGerador == 0, pertoDoGerador)
+
+-- varios sorteios diferentes, todos validos
+local todosValidos = true
+for k = 1, 25 do
+	local outroSeed = k * 7919
+	local function r(): number
+		outroSeed = (outroSeed * 1103515245 + 12345) % 2147483648
+		return outroSeed / 2147483648
+	end
+	local sorteio = FuseSpawner.roll(mapOptions, Config.FUSE_COUNT, r)
+	local ok2, motivo2 = FuseSpawner.validate(sorteio, mapOptions)
+	if not ok2 or #sorteio ~= Config.FUSE_COUNT then
+		todosValidos = false
+		__log("   sorteio " .. k .. " invalido: " .. tostring(motivo2))
+		break
+	end
+end
+check("25 sorteios diferentes, todos validos", todosValidos == true)
+
+-- sorteio ruim (random sempre 0) cai no fallback de grade e ainda funciona
+local zerado = FuseSpawner.roll(mapOptions, Config.FUSE_COUNT, function() return 0 end)
+check("random degenerado ainda gera 5", #zerado == Config.FUSE_COUNT, #zerado)
+local okZero, motivoZero = FuseSpawner.validate(zerado, mapOptions)
+check("fallback tambem e valido", okZero == true, motivoZero)
+
+local generico = FuseSpawner.roll(genMoved, Config.FUSE_COUNT, seeded)
+local okGen = FuseSpawner.validate(generico, genMoved)
+check("funciona com gerador em outra posicao", okGen == true)
+
+__log("== GEOMETRIA: gerador e portao no mapa ==")
+local gx, gz = Config.GENERATOR_POSITION[1], Config.GENERATOR_POSITION[3]
+local tx, tz = Config.EXIT_GATE_POSITION[1], Config.EXIT_GATE_POSITION[3]
+
+check("gerador dentro do piso", math.abs(gx) + 4 < halfMap and math.abs(gz) + 3 < halfMap)
+check("portao dentro do piso", math.abs(tx) + Config.EXIT_GATE_WIDTH / 2 < halfMap and math.abs(tz) < halfMap)
+check("portao cabe sob o teto", Config.EXIT_GATE_HEIGHT + 2 <= Config.MAP_WALL_HEIGHT)
+
+-- O gerador nao pode estar dentro de um pilar.
+local geradorEmPilar = false
+for _, p in PILARES_SP do
+	if math.abs(gx - p.x) < (p.w / 2 + 4) and math.abs(gz - p.z) < (p.d / 2 + 3) then
+		geradorEmPilar = true
+	end
+end
+check("gerador fora dos pilares", geradorEmPilar == false)
+
+-- O portao nao pode estar dentro de um pilar.
+local portaoEmPilar = false
+for _, p in PILARES_SP do
+	if math.abs(tx - p.x) < (p.w / 2 + Config.EXIT_GATE_WIDTH / 2) and math.abs(tz - p.z) < (p.d / 2 + 1.5) then
+		portaoEmPilar = true
+	end
+end
+check("portao fora dos pilares", portaoEmPilar == false)
+
+-- O jogador nasce longe do gerador: tem que explorar.
+local spawnZ = -halfMap + 12
+check(
+	"gerador longe do nascimento",
+	math.sqrt(gx * gx + (gz - spawnZ) * (gz - spawnZ)) >= 40,
+	math.sqrt(gx * gx + (gz - spawnZ) * (gz - spawnZ))
+)
+
+-- Gerador e portao em lados opostos: a fuga atravessa o mapa.
+check("gerador e portao distantes", math.sqrt((gx - tx) ^ 2 + (gz - tz) ^ 2) >= 50)
+
+__log("== ESCAPE: devolver fusivel (portador saiu) ==")
+-- O servidor reseta `collected` e reexibe o modelo. Aqui testamos a parte
+-- pura: depois de "devolver", o mesmo fusivel volta a poder ser coletado.
+local f3 = EscapeLogic.newFuse(3)
+local s1 = EscapeLogic.markCollected(EscapeLogic.newProgress(), f3, 99)
+check("fusivel 3 na mao", EscapeLogic.holdingOf(s1, 99) == 3)
+check("nao pode pegar outro", EscapeLogic.canCollect(s1, EscapeLogic.newFuse(4), 99, 2, true).ok == false)
+
+-- devolucao (equivalente a releaseOrphans)
+local devolvido = EscapeLogic.releaseFuse(s1, f3, 99)
+check("apos devolver, mao vazia", EscapeLogic.holdingOf(devolvido, 99) == nil)
+check("fusivel volta a nao-coletado", f3.collected == false and f3.byUserId == nil)
+check("fusivel devolvido pode ser pego de novo", EscapeLogic.canCollect(devolvido, f3, 99, 2, true).ok == true)
+check("progresso de instalacao preservado", devolvido.installed == s1.installed)
+check("release nao quebra a fase", devolvido.phase == s1.phase)
+check("release nao abre o portao", devolvido.gateOpen == false)
+
+-- release durante a instalacao: cancela a barra mas mantem o instalado
+local meio = EscapeLogic.newProgress()
+meio = EscapeLogic.withChanges(meio, { installed = 2 })
+local f9 = EscapeLogic.newFuse(9)
+meio = EscapeLogic.markCollected(meio, f9, 5)
+meio = EscapeLogic.beginInstall(meio, 5, 100)
+local solto = EscapeLogic.releaseFuse(meio, f9, 5)
+check("release para a barra", solto.installingBy == nil)
+check("release mantem instalados", solto.installed == 2)
+check("release zera a mao", EscapeLogic.holdingOf(solto, 5) == nil)
+
+__log("== ESCAPE: co-op (progresso e compartilhado) ==")
+-- Jogador A pega, jogador B nao pode pegar o mesmo; A instala, B ve o numero.
+local co = EscapeLogic.newProgress()
+local fa = EscapeLogic.newFuse(1)
+local fb = EscapeLogic.newFuse(2)
+co = EscapeLogic.markCollected(co, fa, 1)
+check("A pegou", EscapeLogic.holdingOf(co, 1) == 1)
+check("B nao pode pegar o mesmo fusivel", EscapeLogic.canCollect(co, fa, 2, 2, true).ok == false)
+check("B pode pegar outro fusivel", EscapeLogic.canCollect(co, fb, 2, 2, true).ok == true)
+
+-- B pega o dele: dois jogadores carregando ao mesmo tempo
+co = EscapeLogic.markCollected(co, fb, 2)
+check("A e B carregam juntos", EscapeLogic.holdersCount(co) == 2)
+
+local t = 500
+co = EscapeLogic.beginInstall(co, 1, t)
+check("A instalando", co.installingBy == 1)
+co = EscapeLogic.completeInstall(co, 1, t + Config.FUSE_INSTALL_SECONDS)
+check("instalacao de A conta para todos", co.installed == 1)
+check("mao de A liberada", EscapeLogic.holdingOf(co, 1) == nil)
+check("B continua com o dele", EscapeLogic.holdingOf(co, 2) == 2)
+check("restou 1 carregando", EscapeLogic.holdersCount(co) == 1)
+
+__log("== REGRESSAO: campo opcional apagado de verdade ==")
+-- `{ installingBy = nil }` NAO apaga a chave em Lua (o `for` nao itera), o
+-- valor antigo continuava e a segunda instalacao falhava com "ja esta
+-- instalando". Este teste garante que cancelar/terminar limpa de fato.
+local r = EscapeLogic.newProgress()
+local fr = EscapeLogic.newFuse(1)
+r = EscapeLogic.markCollected(r, fr, 1)
+r = EscapeLogic.beginInstall(r, 1, 100)
+check("instalando antes", r.installingBy == 1)
+
+local rc = EscapeLogic.cancelInstall(r)
+check("cancelInstall limpa installingBy", rc.installingBy == nil, rc.installingBy)
+
+-- E possivel instalar DE NOVO depois de cancelar.
+local r2 = EscapeLogic.beginInstall(rc, 1, 102)
+check("segunda instalacao inicia", r2.installingBy == 1)
+local r3 = EscapeLogic.completeInstall(r2, 1, 106)
+check("completeInstall limpa installingBy", r3.installingBy == nil)
+
+-- Idem para releaseFuse quando ELE era quem instalava.
+local r4 = EscapeLogic.newProgress()
+local fr4 = EscapeLogic.newFuse(4)
+r4 = EscapeLogic.markCollected(r4, fr4, 8)
+r4 = EscapeLogic.beginInstall(r4, 8, 200)
+local r5 = EscapeLogic.releaseFuse(r4, fr4, 8)
+check("releaseFuse limpa installingBy", r5.installingBy == nil)
+check("releaseFuse limpa a mao", EscapeLogic.holdingOf(r5, 8) == nil)
+
+-- markFinished limpa tudo.
+local r6 = EscapeLogic.markFinished(r3, 300)
+check("fim limpa installingBy", r6.installingBy == nil)
+check("fim limpa as maos", EscapeLogic.holdersCount(r6) == 0)
+
 __log("")
 __log(string.format("RESULTADO: %d passaram, %d falharam", passed, failed))
 if failed > 0 then error(string.format("%d teste(s) falharam", failed)) end

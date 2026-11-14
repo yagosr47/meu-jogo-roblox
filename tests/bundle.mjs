@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const shared = join(root, 'src', 'shared');
 
-const mods = ['Config', 'StaminaLogic', 'FlashlightLogic', 'MonsterAI'];
+const mods = ['Config', 'StaminaLogic', 'FlashlightLogic', 'MonsterAI', 'EscapeLogic', 'FuseSpawner'];
 
 let out = 'local __mods: { [string]: any } = {}\n';
 out += 'local function __require(name: string): any\n';

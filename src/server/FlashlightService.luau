@@ -90,6 +90,11 @@ function FlashlightService.start(): Service
 
 	local remoteFolder = ReplicatedStorage:FindFirstChild(Remotes.FOLDER_NAME) :: Folder
 
+	-- Declaracoes antecipadas: `tryPickup` chama `collectPickup` e o respawn
+	-- chama `spawnPickup`, mas os dois so' sao definidos mais abaixo.
+	local collectPickup: (Player, Model) -> ()
+	local spawnPickup: (Vector3) -> ()
+
 	local function replicate(player: Player)
 		local state = PlayerState.get(player)
 		if not state then
@@ -163,7 +168,7 @@ function FlashlightService.start(): Service
 	end
 
 	--- Recarrega de fato e repõe a pilha. Só chamar depois de validar.
-	local function collectPickup(player: Player, model: Model)
+	function collectPickup(player: Player, model: Model)
 		local state = PlayerState.get(player)
 		if not state then
 			return
@@ -205,7 +210,7 @@ function FlashlightService.start(): Service
 		end)
 	end
 
-	local function spawnPickup(position: Vector3)
+	function spawnPickup(position: Vector3)
 		local model = makePickup(position, pickupFolder)
 
 		local core = model:FindFirstChild("Core")
