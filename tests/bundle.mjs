@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const shared = join(root, 'src', 'shared');
 
-const mods = ['Config', 'StaminaLogic', 'FlashlightLogic', 'MonsterAI', 'EscapeLogic', 'FuseSpawner', 'SprintIntent'];
+const mods = ['Config', 'StaminaLogic', 'FlashlightLogic', 'MonsterAI', 'EscapeLogic', 'FuseSpawner', 'SprintIntent', 'LightingLogic'];
 
 let out = 'local __mods: { [string]: any } = {}\n';
 out += 'local function __require(name: string): any\n';
@@ -27,7 +27,18 @@ for (const name of mods) {
   out += `__mods["${name}"] = function()\n${src}\nend\n\n`;
 }
 
-out += readFileSync(join(here, 'logic.spec.luau'), 'utf8');
+// O Luau limita registradores por script, entao os testes de iluminacao
+// ficam num arquivo separado. Ele entra ANTES do trecho final do logic.spec
+// que imprime o RESULTADO — senao o placar sairia zerado.
+const logicSpec = readFileSync(join(here, 'logic.spec.luau'), 'utf8');
+const marker = '__log(string.format("RESULTADO:';
+const cut = logicSpec.indexOf(marker);
+if (cut < 0) throw new Error('logic.spec.luau perdeu a linha de RESULTADO');
+
+out += logicSpec.slice(0, cut);
+out += readFileSync(join(here, 'lighting.spec.luau'), 'utf8');
+out += '\n';
+out += logicSpec.slice(cut);
 out += '\nreturn table.concat(__out, "\\n")\n';
 
 writeFileSync(join(here, 'bundle.luau'), out);

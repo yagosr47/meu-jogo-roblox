@@ -105,9 +105,17 @@ local Config = {
 	MAP_FLOOR_SIZE = 120,
 	MAP_WALL_HEIGHT = 16,
 	MAP_WALL_THICKNESS = 2,
-	MAP_LIGHT_COUNT = 6,
-	MAP_LIGHT_RANGE = 26,
-	MAP_LIGHT_BRIGHTNESS = 0.8,
+	-- 9 luzes (grade 3x3) cobrem o salão inteiro. Com 6 num círculo o centro
+	-- e as quinas ficavam no escuro absoluto.
+	MAP_LIGHT_COUNT = 9,
+	-- Range precisa alcançar o chão (a luz fica a 14 de altura) sem vazar
+	-- pelo teto: 34 cobre um raio de ~34 studs para baixo e para os lados.
+	MAP_LIGHT_RANGE = 34,
+	-- Brilho calibrado pelo decaimento do PointLight: a 14 studs de altura o
+	-- chão recebe ~35% da intensidade. Com 0.9 dava 0.31 — invisível com
+	-- ExposureCompensation = -0.35. 2.2 deixa o chão em ~0.76 (dá para andar
+	-- sem lanterna), ainda escuro o bastante para o clima.
+	MAP_LIGHT_BRIGHTNESS = 2.2,
 
 	-- ------------------------------------------------------------------
 	-- Objetivo de fuga: fusíveis, gerador e portão
