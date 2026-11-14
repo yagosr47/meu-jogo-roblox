@@ -179,7 +179,9 @@ local function updateBreathing(dt: number, tired: boolean)
 	sound.PlaybackSpeed = 0.58 + (1 - staminaRatio) * 0.35
 
 	if sound.Volume <= 0.01 and sound.IsPlaying then
-		sound.Pause()
+		pcall(function()
+			sound:Pause()
+		end)
 	elseif sound.Volume > 0.01 and not sound.IsPlaying then
 		pcall(function()
 			sound:Resume()

@@ -140,15 +140,19 @@ Há ainda testes estruturais (Python, sem dependências) e um teste que executa
 o `MapBuilder` de verdade:
 
 ```bash
-python3 tests/check_requires.py   # todo require() aponta para um caminho real
-python3 tests/check_scope.py      # nenhuma `local function` chamada antes de existir
-node tests/test_mapbuilder.mjs    # carrega o MapBuilder contra um stub do Roblox
+python3 tests/check_requires.py     # todo require() aponta para um caminho real
+python3 tests/check_scope.py        # nenhuma `local function` chamada antes de existir
+python3 tests/check_method_calls.py # nenhum método chamado com '.' no lugar de ':'
+node tests/test_mapbuilder.mjs      # carrega o MapBuilder contra um stub do Roblox
 ```
 
 - **`check_requires`** confere cada `require` contra a árvore gerada pelo
   `default.project.json`.
 - **`check_scope`** acha `local function` chamada antes da declaração — em Luau
   isso vira `nil` em tempo de execução e o compilador não avisa.
+- **`check_method_calls`** acha método de instância chamado com `.` (`sound.Pause()`
+  em vez de `sound:Pause()`). Isso é erro semântico: `lua_compile` aceita, e só
+  estoura em runtime com `Expected ':' not '.' calling member function`.
 - **`test_mapbuilder`** roda o módulo real contra um stub mínimo do Roblox
   (`tests/support/roblox_stub.luau`) em 7 cenários: tudo presente, `Shared`
   ausente, `Config` ausente dentro de `Shared`, Config incompleto, Config com
