@@ -1,0 +1,21 @@
+# Arquivos gerados pelo Rojo e pelo Roblox Studio
+/meu-jogo-roblox.rbxlx
+/meu-jogo-roblox.rbxl
+/*.rbxlx.lock
+/*.rbxl.lock
+sourcemap.json
+*.sourcemap.json
+
+# Modelos exportados do Studio
+*.rbxm
+*.rbxmx
+
+# Builds locais
+/build/
+/out/
+
+# Sistema operacional e editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
