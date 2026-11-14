@@ -16,6 +16,20 @@ local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+-- `LightingLogic` é puro (só matemática), mas o require ainda pode falhar se
+-- o Rojo estiver desconectado. Nesse caso seguimos sem as posições novas.
+local LightingLogic = nil
+do
+	local shared = ReplicatedStorage:FindFirstChild("Shared")
+	local module = shared and shared:FindFirstChild("LightingLogic")
+	if module and module:IsA("ModuleScript") then
+		local ok, result = pcall(require, module)
+		if ok and type(result) == "table" then
+			LightingLogic = result
+		end
+	end
+end
+
 local MapBuilder = {}
 
 -- ======================================================================
@@ -249,32 +263,62 @@ function MapBuilder.build(parent: Instance?): Map
 	local folder = MapBuilder.ensureFolder(target, "TerrorMap")
 
 	local size = FLOOR_SIZE
+	local half = size / 2
+	local thickness = WALL_THICKNESS
+	local height = WALL_HEIGHT
 
+	-- ==================================================================
+	-- Geometria sem sobreposição (o "chão bugado" era z-fighting)
+	-- ==================================================================
+	-- Regra que este bloco segue: duas faces de peças diferentes NUNCA
+	-- ficam no mesmo plano. Quando ficam, a GPU não tem como decidir qual
+	-- desenhar na frente e o resultado é aquele cintilar/zigue-zague — que
+	-- aparece justamente na quina do chão com a parede.
+	--
+	-- Antes: o piso ia de -half a +half e as paredes eram centradas em
+	-- `±half`, então metade de cada parede ficava FORA do piso e as duas
+	-- faces coincidiam exatamente na borda.
+
+	-- Piso: cresce meia espessura de parede para cada lado, para ficar
+	-- DEBAIXO das paredes em vez de encostado nelas.
+	local floorSize = size + thickness * 2
 	local floor = makePart({
 		Name = "Piso",
-		Size = Vector3.new(size, 2, size),
+		Size = Vector3.new(floorSize, 2, floorSize),
 		Position = Vector3.new(0, -1, 0),
 		Color = FLOOR_COLOR,
 		Material = Enum.Material.Concrete,
 	}, folder)
 
+	-- A base da parede fica DENTRO do piso (que vai de -2 a 0), nunca no
+	-- mesmo plano da face inferior dele — senão o z-fighting só muda de lugar.
+	local wallBase = -1.5
+
+	-- As paredes sobem ATÉ DENTRO do teto — acima da face inferior dele. Se
+	-- terminassem exatamente na base do teto, as duas faces ficariam no mesmo
+	-- plano (wallTopY = ceilingY - 1) e o z-fighting só mudaria de lugar: do
+	-- chão para o topo das paredes.
+	local ceilingY = height + 2
+	local wallTopY = ceilingY
 	local ceiling = makePart({
 		Name = "Teto",
-		Size = Vector3.new(size, 2, size),
-		Position = Vector3.new(0, WALL_HEIGHT + 1, 0),
+		Size = Vector3.new(floorSize, 2, floorSize),
+		Position = Vector3.new(0, ceilingY, 0),
 		Color = WALL_COLOR,
 		Material = Enum.Material.Concrete,
 	}, folder)
 
-	local half = size / 2
-	local thickness = WALL_THICKNESS
-	local height = WALL_HEIGHT
+	-- As paredes vão da base (dentro do piso) até o topo (dentro do teto),
+	-- sempre sobrepostas em vez de encostadas face a face.
+	local wallCenterY = (wallBase + wallTopY) / 2
+	local wallSizeY = wallTopY - wallBase
+	local wallSpan = size + thickness * 2
 
 	local walls = {
-		{ name = "ParedeNorte", size = Vector3.new(size, height, thickness), pos = Vector3.new(0, height / 2, -half) },
-		{ name = "ParedeSul", size = Vector3.new(size, height, thickness), pos = Vector3.new(0, height / 2, half) },
-		{ name = "ParedeLeste", size = Vector3.new(thickness, height, size), pos = Vector3.new(half, height / 2, 0) },
-		{ name = "ParedeOeste", size = Vector3.new(thickness, height, size), pos = Vector3.new(-half, height / 2, 0) },
+		{ name = "ParedeNorte", size = Vector3.new(wallSpan, wallSizeY, thickness), pos = Vector3.new(0, wallCenterY, -half) },
+		{ name = "ParedeSul", size = Vector3.new(wallSpan, wallSizeY, thickness), pos = Vector3.new(0, wallCenterY, half) },
+		{ name = "ParedeLeste", size = Vector3.new(thickness, wallSizeY, wallSpan), pos = Vector3.new(half, wallCenterY, 0) },
+		{ name = "ParedeOeste", size = Vector3.new(thickness, wallSizeY, wallSpan), pos = Vector3.new(-half, wallCenterY, 0) },
 	}
 
 	for _, wall in walls do
@@ -287,11 +331,17 @@ function MapBuilder.build(parent: Instance?): Map
 		}, folder)
 	end
 
+	-- Os pilares afundam `PILLAR_SINK` no piso. Se a base deles ficasse
+	-- exatamente em y=0 (o topo do piso), a face de baixo de cada pilar
+	-- ficaria coplanar com o chão e voltaria o mesmo cintilar — agora na base
+	-- dos pilares, que é onde o jogador passa o tempo todo.
+	local PILLAR_SINK = 0.5
+
 	for index, pillar in PILLARS do
 		makePart({
 			Name = "Pilar" .. index,
-			Size = Vector3.new(pillar.w, pillar.h, pillar.d),
-			Position = Vector3.new(pillar.x, pillar.h / 2, pillar.z),
+			Size = Vector3.new(pillar.w, pillar.h + PILLAR_SINK, pillar.d),
+			Position = Vector3.new(pillar.x, (pillar.h + PILLAR_SINK) / 2 - PILLAR_SINK, pillar.z),
 			Color = PILLAR_COLOR,
 			Material = Enum.Material.Brick,
 		}, folder)
@@ -299,29 +349,65 @@ function MapBuilder.build(parent: Instance?): Map
 
 	-- Luzes fracas e espaçadas: o suficiente para andar, não para se sentir
 	-- seguro. (A lanterna é que ilumina de verdade.)
-	local lightCount = math.max(1, math.floor(LIGHT_COUNT))
+	--
+	-- Duas decisões que resolvem o "mapa piscando luzes aleatórias":
+	--
+	--   * `Shadows = false` nestas luzes. Uma PointLight com sombra faz o
+	--     motor recalcular o shadow map toda vez que o Part entra/sai do
+	--     campo de visão — com 6 delas o mapa cintila ao caminhar. Sombra
+	--     fica só na lanterna do jogador, que é a que dá tensão.
+	--   * posição em GRADE, derivada do tamanho do mapa (antes era um círculo
+	--     de raio 36 que deixava o centro e as quinas no escuro).
 
-	for index = 1, lightCount do
-		local angle = (index / lightCount) * math.pi * 2
-		local radius = size * 0.3
-		local position = Vector3.new(math.cos(angle) * radius, height - 3, math.sin(angle) * radius)
+	-- Fallback embutido: sem `LightingLogic` (Rojo desconectado), usa um
+	-- círculo simples. O mapa fica menos bonito, mas sobe.
+	local lightPositions: { { number } }
+	if LightingLogic then
+		-- Passamos os pilares: uma luz pendurada em cima de um pilar de 14
+		-- studs bate na laje dele e vira um clarão chapado, deixando o chão
+		-- ao redor escuro.
+		lightPositions = LightingLogic.lightPositions(size, height, LIGHT_COUNT, PILLARS)
+	else
+		local count = math.max(1, math.floor(LIGHT_COUNT))
+		lightPositions = {}
+		for index = 1, count do
+			local angle = (index / count) * math.pi * 2
+			table.insert(lightPositions, {
+				math.cos(angle) * size * 0.3,
+				height - 2,
+				math.sin(angle) * size * 0.3,
+			})
+		end
+	end
 
+	for index, position in lightPositions do
 		local holder = Instance.new("Part")
 		holder.Name = "Luz" .. index
 		holder.Anchored = true
 		holder.CanCollide = false
 		holder.CanQuery = false
+		holder.CanTouch = false
+		-- O suporte precisa ser grande: o motor faz culling da luz pela
+		-- bounding box do Part pai. Com 1 stud, a luz some ao andar.
+		holder.Size = Vector3.new(6, 1, 6)
 		holder.Transparency = 1
-		holder.Size = Vector3.new(1, 1, 1)
-		holder.Position = position
+		holder.CastShadow = false
+		holder.Position = Vector3.new(position[1], position[2], position[3])
 		holder.Parent = folder
 
 		local light = Instance.new("PointLight")
 		light.Brightness = LIGHT_BRIGHTNESS
 		light.Range = LIGHT_RANGE
 		light.Color = Color3.fromRGB(255, 214, 170)
-		light.Shadows = true
+		-- Sem sombra: é o que impede o mapa de cintilar ao andar.
+		light.Shadows = false
 		light.Parent = holder
+
+		-- A cintilação é feita no CLIENTE (um `PointLight` tweenando no
+		-- servidor seria replicado todo frame para todos os jogadores).
+		-- Guardamos os parâmetros como atributos para o cliente ler.
+		light:SetAttribute("FlickerBase", LIGHT_BRIGHTNESS)
+		light:SetAttribute("FlickerIndex", index)
 	end
 
 	local spawn = Instance.new("SpawnLocation")

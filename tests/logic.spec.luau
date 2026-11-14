@@ -5,6 +5,7 @@ local StaminaLogic = __require("StaminaLogic")
 local FlashlightLogic = __require("FlashlightLogic")
 local MonsterAI = __require("MonsterAI")
 local SprintIntent = __require("SprintIntent")
+local LightingLogic = __require("LightingLogic")
 
 local passed, failed = 0, 0
 local function check(name: string, cond: boolean, detail: any?)

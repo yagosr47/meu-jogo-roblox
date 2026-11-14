@@ -95,6 +95,17 @@ local function makeInstance(className)
 		return findIn(self, name)
 	end
 
+	-- Atributos: o MapBuilder marca as luzes com FlickerBase/FlickerIndex e o
+	-- cliente de iluminação lê de volta. Sem isto o stub quebra o build.
+	function tmpl:SetAttribute(name, value)
+		self._attributes = self._attributes or {}
+		self._attributes[name] = value
+	end
+
+	function tmpl:GetAttribute(name)
+		return self._attributes and self._attributes[name] or nil
+	end
+
 	return setmetatable({}, {
 		__index = function(self, key)
 			if key == "Parent" then
