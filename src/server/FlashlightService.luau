@@ -308,12 +308,18 @@ function FlashlightService.start(): Service
 			end
 
 			local before = state.flashlight
+			-- `state.flashlight` é a MESMA tabela que `before`, e `apply` escreve
+			-- nela — então ler `before.battery` DEPOIS de aplicar compara o valor
+			-- novo com ele mesmo e a virada para "bateria baixa" nunca é vista.
+			-- Guardamos o valor antigo antes.
+			local wasLow = FlashlightLogic.isLow(before.battery)
+
 			local newFlashlight, changed = FlashlightLogic.step(before, dt, now)
 			-- Aplica no lugar: a HUD e o `PlayerState` leem esta referência.
 			FlashlightLogic.apply(state.flashlight, newFlashlight)
 
 			local step = FlashlightLogic.toStep(newFlashlight.battery)
-			local crossedLow = FlashlightLogic.isLow(newFlashlight.battery) ~= FlashlightLogic.isLow(before.battery)
+			local crossedLow = FlashlightLogic.isLow(newFlashlight.battery) ~= wasLow
 
 			-- Replica só em mudança de passo (2%), de estado ou na virada do
 			-- "bateria baixa" — evita um remote por frame.

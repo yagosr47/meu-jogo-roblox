@@ -4,6 +4,7 @@ local Config = __require("Config")
 local StaminaLogic = __require("StaminaLogic")
 local FlashlightLogic = __require("FlashlightLogic")
 local MonsterAI = __require("MonsterAI")
+local SprintIntent = __require("SprintIntent")
 
 local passed, failed = 0, 0
 local function check(name: string, cond: boolean, detail: any?)
@@ -703,6 +704,98 @@ check("releaseFuse limpa a mao", EscapeLogic.holdingOf(r5, 8) == nil)
 local r6 = EscapeLogic.markFinished(r3, 300)
 check("fim limpa installingBy", r6.installingBy == nil)
 check("fim limpa as maos", EscapeLogic.holdersCount(r6) == 0)
+
+-- ======================================================================
+__log("== REGRESSAO: Shift e lanterna no comeco da partida ==")
+-- Bug 1: `lastToggleAt` comeca em 0 ("nunca tocou"), mas o relogio do
+-- Roblox NAO comeca em 0 no cliente. A comparacao direta recusava o
+-- primeiro F logo no spawn.
+local fresh = FlashlightLogic.new()
+check("primeiro F funciona com relogio pequeno", FlashlightLogic.canToggle(fresh, 0.02) == true)
+check("primeiro F funciona com relogio grande", FlashlightLogic.canToggle(fresh, 5000) == true)
+check("primeiro F funciona em relogio negativo", FlashlightLogic.canToggle(fresh, -1) == true)
+
+-- O anti-spam continua valendo depois do primeiro toque.
+local touched = { on = true, battery = 100, lastToggleAt = 10 }
+check("anti-spam ainda bloqueia", FlashlightLogic.canToggle(touched, 10.05) == false)
+check("anti-spam libera depois", FlashlightLogic.canToggle(touched, 10.5) == true)
+check("cooldown vem do Config", Config.FLASHLIGHT_TOGGLE_COOLDOWN > 0)
+
+-- Sem bateria nao liga, nem com lastToggleAt zerado.
+check("sem bateria nao liga", FlashlightLogic.canToggle({ on = false, battery = 0, lastToggleAt = 0 }, 999) == false)
+
+-- Bug 2: o servidor corta a corrida ao esgotar a estamina; ao recuperar, o
+-- jogador PRECISA voltar a correr sem soltar o Shift. A regra que garante
+-- isso e `canSprint` liberar de novo depois da recuperacao.
+local recup = { stamina = Config.STAMINA_EXHAUSTED_UNTIL + 1, sprinting = false, exhausted = false, lastSprintAt = 0, lastMovementAt = 0 }
+check("corre de novo apos recuperar", StaminaLogic.canSprint(recup) == true)
+-- `speedFor` exige os DOIS lados: o pedido do jogador e o aval do servidor.
+local recupSprint = { stamina = Config.STAMINA_EXHAUSTED_UNTIL + 1, sprinting = true, exhausted = false, lastSprintAt = 0, lastMovementAt = 0 }
+check("velocidade volta a sprint", StaminaLogic.speedFor(recupSprint, true) == Config.SPRINT_SPEED)
+check("sem aval do servidor nao corre", StaminaLogic.speedFor(recup, true) == Config.WALK_SPEED)
+
+-- A virada "bateria baixa" precisa ser detectada comparando o valor ANTES
+-- do apply (o `before` é a mesma tabela do state).
+local lowBefore = FlashlightLogic.isLow(20.5)
+local lowAfter = FlashlightLogic.isLow(19.5)
+check("virada para bateria baixa e detectavel", lowBefore ~= lowAfter)
+
+-- ======================================================================
+__log("== REGRESSAO: intencao de corrida (SprintIntent) ==")
+-- O bug: o servidor corta a corrida ao esgotar a estamina. Se o cliente
+-- continuar achando que "ja avisou true", a corrida nunca mais volta sem
+-- soltar o Shift. Estes testes travam o comportamento correto.
+
+local si = SprintIntent.new()
+check("comeca sem correr", si.holdingKey == false and si.declared == false)
+
+-- Apertar manda na hora.
+check("apertar avisa o servidor", SprintIntent.pressKey(si, true, 10) == true)
+check("marcou como declarado", si.declared == true and si.holdingKey == true)
+
+-- Soltar TAMBEM manda na hora (nunca pode ser engolido).
+check("soltar avisa sempre", SprintIntent.pressKey(si, false, 10.01) == true)
+check("parou de segurar", si.holdingKey == false)
+
+-- Servidor cortou a corrida (esgotou) com o dedo ainda apertado.
+local s2 = SprintIntent.new()
+SprintIntent.pressKey(s2, true, 100)
+SprintIntent.onServerState(s2, true, 100.1)
+check("confirmado nao pede resync", SprintIntent.shouldResync(s2, 100.2, true) == false)
+
+-- Agora o servidor corta: sprinting=false, jogador segurando.
+SprintIntent.onServerState(s2, false, 101)
+check("corte libera a deduplicacao", s2.declared == false)
+check("watchdog armado", s2.watchdogAt > 0)
+check("ainda nao e hora", SprintIntent.shouldResync(s2, 101.1, true) == false)
+check("sem estamina nao tenta", SprintIntent.shouldResync(s2, 999, false) == false)
+
+-- Passado o prazo e com estamina, reafirma UMA vez (nao a cada frame).
+check("hora de reafirmar", SprintIntent.shouldResync(s2, 101.6, true) == true)
+check("nao repete no frame seguinte", SprintIntent.shouldResync(s2, 101.7, true) == false)
+
+-- Soltar o Shift zera tudo: ninguem fica preso correndo.
+local s3 = SprintIntent.new()
+SprintIntent.pressKey(s3, true, 5)
+SprintIntent.onServerState(s3, true, 5.1)
+SprintIntent.pressKey(s3, false, 6)
+check("soltar limpa o watchdog", s3.watchdogAt == 0 and s3.declared == false)
+check("parado nunca faz resync", SprintIntent.shouldResync(s3, 9999, true) == false)
+
+-- Um STATE atrasado (sprinting=true de antes do key-up) nao pode rearmar a
+-- deduplicacao e travar o proximo Shift.
+local s4 = SprintIntent.new()
+SprintIntent.pressKey(s4, true, 1)
+SprintIntent.onServerState(s4, true, 1.1)
+SprintIntent.pressKey(s4, false, 2)
+SprintIntent.onServerState(s4, true, 2.5) -- chegou atrasado
+check("state atrasado nao trava o proximo Shift", SprintIntent.pressKey(s4, true, 3) == true)
+
+-- mayTry: a estamina manda, e o servidor continua sendo quem decide.
+check("pode tentar com estamina cheia", SprintIntent.mayTry(Config.STAMINA_MAX, Config.STAMINA_MAX, false) == true)
+check("nao pode tentar exausto", SprintIntent.mayTry(Config.STAMINA_MAX, Config.STAMINA_MAX, true) == false)
+check("nao pode tentar sem estamina", SprintIntent.mayTry(0, Config.STAMINA_MAX, false) == false)
+check("limiar vem do Config", SprintIntent.mayTry(Config.STAMINA_EXHAUSTED_UNTIL, Config.STAMINA_MAX, false) == false)
 
 __log("")
 __log(string.format("RESULTADO: %d passaram, %d falharam", passed, failed))

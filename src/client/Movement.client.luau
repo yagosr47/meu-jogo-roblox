@@ -16,6 +16,7 @@ local Workspace = game:GetService("Workspace")
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(shared.Config)
 local Remotes = require(shared.Remotes)
+local SprintIntent = require(shared.SprintIntent)
 
 local HudKit = require(script.Parent.HudKit)
 
@@ -193,32 +194,41 @@ end
 -- Input (Shift)
 -- ----------------------------------------------------------------------
 
-local function setSprinting(value: boolean)
-	if localSprinting == value then
-		return
+-- A intenção de correr vive em `SprintIntent` (módulo puro, testável). Aqui
+-- só ligamos os eventos a ela e disparamos o RemoteEvent quando ela manda.
+
+local sprintIntent = SprintIntent.new()
+
+--- Manda a intenção atual ao servidor.
+local function pushSprint()
+	remotes[Remotes.CLIENT_TO_SERVER.SET_SPRINTING]:FireServer(sprintIntent.holdingKey)
+end
+
+local function setHoldingKey(holding: boolean)
+	if SprintIntent.pressKey(sprintIntent, holding, os.clock()) then
+		pushSprint()
 	end
-	localSprinting = value
-	remotes[Remotes.CLIENT_TO_SERVER.SET_SPRINTING]:FireServer(value)
 end
 
 UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then
-		return
-	end
+	-- Mesmo "processado" (chat/menu), registramos a tecla: perder o key-up
+	-- deixaria o jogador travado em corrida.
 	if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
-		setSprinting(true)
+		setHoldingKey(not processed)
 	end
 end)
 
-UserInputService.InputEnded:Connect(function(input, processed)
+UserInputService.InputEnded:Connect(function(input, _processed)
 	if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
-		setSprinting(false)
+		-- Key-up SEMPRE vale, mesmo com a UI em foco: é a única forma de
+		-- garantir que ninguém fique preso correndo.
+		setHoldingKey(false)
 	end
 end)
 
 -- Perder o foco da janela solta o Shift (senão o jogador "trava" correndo).
 UserInputService.WindowFocusReleased:Connect(function()
-	setSprinting(false)
+	setHoldingKey(false)
 end)
 
 -- ----------------------------------------------------------------------
@@ -236,11 +246,17 @@ remotes[Remotes.SERVER_TO_CLIENT.STATE].OnClientEvent:Connect(function(payload: 
 	staminaRatio = math.clamp(stamina / maxStamina, 0, 1)
 	exhausted = payload.exhausted == true
 	serverSprinting = payload.sprinting == true
+
+	-- O servidor é a fonte da verdade: a máquina de estados sincroniza com
+	-- ele (e arma o watchdog quando cortou a corrida sem o jogador soltar).
+	SprintIntent.onServerState(sprintIntent, serverSprinting, os.clock())
 end)
 
--- O servidor cortou a corrida (sem estamina)? Solta o input local também.
+-- O servidor cortou a corrida (sem estamina)? Não solta a tecla: se o
+-- jogador ainda estiver segurando o Shift, o watchdog reafirma a intenção
+-- assim que ele puder correr de novo.
 remotes[Remotes.SERVER_TO_CLIENT.RESET].OnClientEvent:Connect(function()
-	setSprinting(false)
+	SprintIntent.onReset(sprintIntent, os.clock())
 end)
 
 -- ----------------------------------------------------------------------
@@ -264,6 +280,17 @@ RunService.RenderStepped:Connect(function(dt)
 		staminaFill.BackgroundColor3 = Color3.fromRGB(255, math.floor(60 + 40 * pulse), 60)
 	end
 
+	-- Watchdog: se o jogador segura o Shift e o servidor não confirmou a
+	-- corrida (cortou por cansaço, ou o pacote caiu no limite de taxa),
+	-- reafirma devagar. Quem decide continua sendo o servidor (`canSprint`).
+	if SprintIntent.shouldResync(
+		sprintIntent,
+		os.clock(),
+		SprintIntent.mayTry(staminaRatio * Config.STAMINA_MAX, Config.STAMINA_MAX, exhausted)
+	) then
+		pushSprint()
+	end
+
 	local isSprintingNow = serverSprinting or (localSprinting and not exhausted)
 	staminaPanel.BackgroundTransparency = if isSprintingNow then 0.2 else 0.35
 
@@ -272,7 +299,7 @@ end)
 
 -- Avisa o servidor no primeiro frame (garante estado sincronizado).
 task.defer(function()
-	remotes[Remotes.CLIENT_TO_SERVER.SET_SPRINTING]:FireServer(false)
+	pushSprint()
 end)
 
 print("[Movement] Primeira pessoa, sprint e respiração ativos.")

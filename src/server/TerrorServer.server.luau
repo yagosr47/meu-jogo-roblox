@@ -109,6 +109,16 @@ local function onCharacterAdded(player: Player, character: Model)
 	PlayerState.setCaught(state, false, os.clock())
 	PlayerState.clearMovement(player)
 
+	-- Respawn é um estado limpo: sem Shift grudado, sem lanterna ligada
+	-- drenando bateria enquanto o jogador está morto.
+	state.sprinting = false
+	state.moving = false
+	FlashlightLogic.apply(state.flashlight, {
+		on = false,
+		battery = state.flashlight.battery,
+		lastToggleAt = state.flashlight.lastToggleAt,
+	})
+
 	local humanoid = character:WaitForChild("Humanoid", 10)
 	if humanoid and humanoid:IsA("Humanoid") then
 		applyHumanoid(state)
@@ -117,6 +127,8 @@ local function onCharacterAdded(player: Player, character: Model)
 			PlayerState.setCaught(state, false, os.clock())
 			-- Ao morrer, a estamina volta (é um respawn limpo).
 			state.stamina = StaminaLogic.new()
+			state.sprinting = false
+			PlayerState.applySpeed(state)
 		end)
 	end
 
@@ -169,9 +181,6 @@ Remotes.getServerSide(remoteFolder, Remotes.CLIENT_TO_SERVER.SET_SPRINTING).OnSe
 	end
 
 	local now = os.clock()
-	if PlayerState.isFlooding(state, now) then
-		return
-	end
 
 	-- O servidor NÃO aceita "estou correndo" como verdade absoluta: ele
 	-- confere se o jogador realmente pode correr (estamina/cansaço) e é ele
@@ -179,6 +188,14 @@ Remotes.getServerSide(remoteFolder, Remotes.CLIENT_TO_SERVER.SET_SPRINTING).OnSe
 	local wantsSprint = declared == true
 	if wantsSprint and not StaminaLogic.canSprint(state.stamina) then
 		wantsSprint = false
+	end
+
+	-- O limite de chamadas existe contra spam, mas NUNCA pode engolir o
+	-- "soltar o Shift": sem isso o jogador fica preso correndo para sempre
+	-- (o cliente já parou de mandar, o servidor acha que ele ainda corre).
+	-- Pedidos de PARAR são sempre aceitos.
+	if wantsSprint and PlayerState.isFlooding(state, now) then
+		return
 	end
 
 	state.sprinting = wantsSprint

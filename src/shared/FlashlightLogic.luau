@@ -52,7 +52,16 @@ function FlashlightLogic.canToggle(state: State, now: number): boolean
 	if FlashlightLogic.isDead(state.battery) then
 		return false
 	end
-	return (now - state.lastToggleAt) >= 0.15
+
+	-- `lastToggleAt` começa em 0 ("nunca tocou") e o relógio do Roblox NÃO
+	-- começa necessariamente em 0 no cliente. Comparar direto fazia o
+	-- primeiro F logo no spawn ser recusado — nunca use 0 como se fosse um
+	-- instante válido.
+	if state.lastToggleAt <= 0 then
+		return true
+	end
+
+	return (now - state.lastToggleAt) >= Config.FLASHLIGHT_TOGGLE_COOLDOWN
 end
 
 -- ----------------------------------------------------------------------

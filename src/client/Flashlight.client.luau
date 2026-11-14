@@ -104,14 +104,21 @@ local function ensureLight(): (Part, SpotLight)
 
 	-- Um "suporte" invisível preso à câmera: assim a luz acompanha a visão
 	-- em primeira pessoa sem depender do personagem.
+	--
+	-- IMPORTANTE: o suporte PRECISA ser grande. O Roblox faz culling das luzes
+	-- pelo bounding box do Part que as contém; com um Part de 0.2 studs
+	-- encostado na câmera, ele sai do frustum e a lanterna simplesmente some
+	-- enquanto o jogador anda. Um Part grande e invisível mantém a luz viva.
 	local holder = Instance.new("Part")
 	holder.Name = "FlashlightHolder"
-	holder.Size = Vector3.new(0.2, 0.2, 0.2)
+	holder.Size = Vector3.new(12, 12, 12)
 	holder.Transparency = 1
 	holder.CanCollide = false
 	holder.CanQuery = false
 	holder.CanTouch = false
+	holder.CastShadow = false
 	holder.Anchored = true
+	holder.Massless = true
 	holder.Parent = Workspace.CurrentCamera
 
 	local light = Instance.new("SpotLight")
@@ -121,6 +128,8 @@ local function ensureLight(): (Part, SpotLight)
 	light.Brightness = 0
 	light.Color = Color3.new(Config.FLASHLIGHT_COLOR[1], Config.FLASHLIGHT_COLOR[2], Config.FLASHLIGHT_COLOR[3])
 	light.Shadows = true
+	-- `Front` brilha para o lado -Z local do Part — que é exatamente "para
+	-- onde a câmera olha" (a câmera também olha para o próprio -Z).
 	light.Face = Enum.NormalId.Front
 	light.Parent = holder
 
@@ -171,7 +180,11 @@ RunService.RenderStepped:Connect(function(dt)
 	}, now)
 
 	local holder, light = ensureLight()
-	holder.CFrame = Workspace.CurrentCamera.CFrame * CFrame.new(0.6, -0.7, -0.5)
+	-- O SpotLight nasce na FACE frontal do Part, não no centro. Então
+	-- deslocamos o suporte metade do tamanho para TRÁS (+Z na câmera), o que
+	-- deixa a face frontal exatamente na posição da câmera: a luz começa nos
+	-- olhos do jogador e vai para onde ele olha.
+	holder.CFrame = Workspace.CurrentCamera.CFrame * CFrame.new(0, 0, holder.Size.Z / 2)
 	light.Enabled = lightState.enabled
 	light.Brightness = lightState.brightness
 
