@@ -1,0 +1,4 @@
+# Ferramentas gerenciadas pelo Rokit (https://github.com/rojo-rbx/rokit)
+# Instale todas com: rokit install
+[tools]
+rojo = "rojo-rbx/rojo@7.7.1"

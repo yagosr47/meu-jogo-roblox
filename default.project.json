@@ -1,0 +1,24 @@
+{
+  "name": "meu-jogo-roblox",
+  "tree": {
+    "$className": "DataModel",
+
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+
+    "ReplicatedStorage": {
+      "$path": "src/ReplicatedStorage"
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayerScripts"
+      }
+    },
+
+    "StarterGui": {
+      "$path": "src/StarterGui"
+    }
+  }
+}
