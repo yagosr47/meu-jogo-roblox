@@ -44,6 +44,7 @@ local Config = {
 	FLASHLIGHT_ANGLE = 55,
 	FLASHLIGHT_BRIGHTNESS = 2.2,
 	FLASHLIGHT_COLOR = { 1, 0.96, 0.86 }, -- [0..1]
+	FLASHLIGHT_TOGGLE_COOLDOWN = 0.15, -- anti-spam entre dois F
 	BATTERY_MAX = 100,
 	BATTERY_DRAIN_PER_SECOND = 1.1, -- ligada, 100% -> ~90s
 	BATTERY_STEP = 2, -- o servidor só persiste a cada 2%
