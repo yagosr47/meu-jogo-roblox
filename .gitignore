@@ -19,3 +19,6 @@ sourcemap.json
 Thumbs.db
 .vscode/
 .idea/
+
+# Testes
+tests/bundle.luau
