@@ -9,18 +9,44 @@
 local Lighting = game:GetService("Lighting")
 local Workspace = game:GetService("Workspace")
 
-local Config = require(script.Parent.Parent.shared.Config)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
 
 local MapBuilder = {}
+
+--- Geometria dos pilares (x, z, largura, profundidade). Somente leitura.
+MapBuilder.pillars = {
+	{ x = 20, z = 20, w = 10, d = 10, h = 14 },
+	{ x = -22, z = 16, w = 8, d = 14, h = 14 },
+	{ x = 26, z = -18, w = 14, d = 8, h = 14 },
+	{ x = -18, z = -22, w = 10, d = 10, h = 14 },
+	{ x = 2, z = 2, w = 12, d = 6, h = 12 },
+}
 
 local FLOOR_COLOR = Color3.fromRGB(38, 40, 46)
 local WALL_COLOR = Color3.fromRGB(26, 27, 31)
 local PILLAR_COLOR = Color3.fromRGB(48, 50, 56)
 
+export type Pillar = {
+	x: number,
+	z: number,
+	w: number,
+	d: number,
+	h: number,
+}
+
 export type Map = {
 	folder: Folder,
 	spawn: SpawnLocation,
 	pickupPoints: { Vector3 },
+}
+
+export type PillarGeometry = {
+	x: number,
+	z: number,
+	w: number,
+	d: number,
 }
 
 local function makePart(properties: { [string]: any }, parent: Instance): BasePart
@@ -40,13 +66,11 @@ end
 
 --- Pilares internos: além de dar forma, servem para o monstro perder a
 --- linha de visão do jogador (mecânica real de esconderijo).
-local PILLARS = {
-	{ x = 20, z = 20, w = 10, d = 10, h = 14 },
-	{ x = -22, z = 16, w = 8, d = 14, h = 14 },
-	{ x = 26, z = -18, w = 14, d = 8, h = 14 },
-	{ x = -18, z = -22, w = 10, d = 10, h = 14 },
-	{ x = 2, z = 2, w = 12, d = 6, h = 12 },
-}
+---
+--- Exportado como `MapBuilder.pillars`: o EscapeService usa esta MESMA lista
+--- para não sortear fusível dentro de um pilar. Duplicar a lista aqui e lá
+--- faria os fusíveis ficarem inalcançáveis se alguém movesse um pilar.
+local PILLARS = MapBuilder.pillars
 
 --- Monta o mapa (ou reaproveita, se já existir) e devolve as referências.
 function MapBuilder.build(parent: Instance): Map

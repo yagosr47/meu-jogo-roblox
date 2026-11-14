@@ -18,6 +18,7 @@ local FlashlightLogic = require(shared.FlashlightLogic)
 local FlashlightService = require(script.Parent.FlashlightService)
 local MapBuilder = require(script.Parent.MapBuilder)
 local MonsterService = require(script.Parent.MonsterService)
+local EscapeService = require(script.Parent.EscapeService)
 local PlayerState = require(script.Parent.PlayerState)
 
 -- 1. Mapa e atmosfera.
@@ -52,6 +53,7 @@ local flashlight = FlashlightService.start()
 flashlight.spawnInitial()
 
 local monster = MonsterService.start()
+local escape = EscapeService.start()
 
 -- ----------------------------------------------------------------------
 -- Estado replicado ao cliente
@@ -241,6 +243,50 @@ Remotes.getServerSide(remoteFolder, Remotes.CLIENT_TO_SERVER.MONSTER_SOUND).OnSe
 end)
 
 -- ----------------------------------------------------------------------
+-- Objetivo de fuga (cliente -> servidor, tudo validado no EscapeService)
+-- ----------------------------------------------------------------------
+
+Remotes.getServerSide(remoteFolder, Remotes.CLIENT_TO_SERVER.COLLECT_FUSE).OnServerEvent:Connect(function(from: Player?, fuseId: any)
+	if typeof(from) ~= "Instance" or not from:IsA("Player") then
+		return
+	end
+
+	local state = PlayerState.get(from)
+	if not state or PlayerState.isFlooding(state, os.clock()) then
+		return
+	end
+
+	if type(fuseId) ~= "number" or fuseId ~= fuseId or fuseId % 1 ~= 0 then
+		return
+	end
+
+	if fuseId < 1 or fuseId > Config.FUSE_COUNT then
+		return
+	end
+
+	escape.handleCollect(from, fuseId)
+end)
+
+Remotes.getServerSide(remoteFolder, Remotes.CLIENT_TO_SERVER.INSTALL_FUSE).OnServerEvent:Connect(function(from: Player?, action: any)
+	if typeof(from) ~= "Instance" or not from:IsA("Player") then
+		return
+	end
+
+	local state = PlayerState.get(from)
+	if not state or PlayerState.isFlooding(state, os.clock()) then
+		return
+	end
+
+	-- O cliente só diz "começar" ou "desistir"; o tempo e a distância são
+	-- medidos no servidor.
+	if action == "start" then
+		escape.handleInstallStart(from)
+	elseif action == "cancel" then
+		escape.handleCancel(from)
+	end
+end)
+
+-- ----------------------------------------------------------------------
 -- Loop autoritativo (estamina + bateria)
 -- ----------------------------------------------------------------------
 
@@ -308,6 +354,12 @@ RunService.Heartbeat:Connect(function(dt)
 		warn("[TerrorServer] erro na lanterna:", err)
 	end
 
+	-- Instalação dos fusíveis: quem conta os 3 s é este tick.
+	local okEscape, errEscape = pcall(escape.tick, now)
+	if not okEscape then
+		warn("[TerrorServer] erro na fuga:", errEscape)
+	end
+
 	local okCleanup, errCleanup = pcall(PlayerState.cleanup)
 	if not okCleanup then
 		warn("[TerrorServer] erro na limpeza:", errCleanup)
@@ -315,8 +367,9 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 print(string.format(
-	"[TerrorServer] Pronto. Estamina %.0f, bateria %.0f, monstro %s.",
+	"[TerrorServer] Pronto. Estamina %.0f, bateria %.0f, monstro %s, %d fusíveis.",
 	Config.STAMINA_MAX,
 	Config.BATTERY_MAX,
-	monster and "ativo" or "inativo"
+	monster and "ativo" or "inativo",
+	Config.FUSE_COUNT
 ))

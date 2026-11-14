@@ -13,6 +13,11 @@ Remotes.CLIENT_TO_SERVER = {
 	SET_FLASHLIGHT = "SetFlashlight",
 	REQUEST_PICKUP = "RequestPickup",
 	MONSTER_SOUND = "MonsterSound", -- ping de áudio para os outros jogadores
+
+	-- Objetivo de fuga (só intenção; o servidor mede e decide)
+	COLLECT_FUSE = "CollectFuse", -- argumento: id do fusível (número)
+	INSTALL_FUSE = "InstallFuse", -- começar a instalação no gerador
+	CANCEL_FUSE = "CancelInstall", -- desistir / sair do gerador
 }
 
 -- Servidor -> cliente
@@ -24,6 +29,12 @@ Remotes.SERVER_TO_CLIENT = {
 	MONSTER_STATE = "MonsterStateChanged",
 	MONSTER_NEAR = "MonsterNear", -- ping de áudio remoto
 	AMBIENT = "AmbientEvent", -- estímulos sonoros do mapa
+
+	-- Objetivo de fuga
+	ESCAPE_STATE = "EscapeStateChanged", -- installed/required/holding/barra/fase
+	ESCAPE_EVENT = "EscapeEvent", -- mensagens (pegou, instalou, gerador completo)
+	GATE_OPENED = "GateOpened", -- o portão abriu (com a posição)
+	ESCAPED = "Escaped", -- alguém venceu a partida
 }
 
 local function ensureFolder(parent: Instance, name: string): Folder

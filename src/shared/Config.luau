@@ -109,6 +109,37 @@ local Config = {
 	MAP_LIGHT_BRIGHTNESS = 0.8,
 
 	-- ------------------------------------------------------------------
+	-- Objetivo de fuga: fusíveis, gerador e portão
+	-- ------------------------------------------------------------------
+	FUSE_COUNT = 5,
+	FUSE_INSTALL_SECONDS = 3, -- barra de progresso de instalação
+	FUSE_COLLECT_MAX_DISTANCE = 12, -- validação no servidor
+	FUSE_INSTALL_MAX_DISTANCE = 12, -- validação no servidor
+	FUSE_INSTALL_COOLDOWN = 0.5, -- entre tentativas
+	FUSE_INSTALL_ABORT_DISTANCE = 16, -- se afastar além disso, cancela
+	FUSE_SPAWN_MARGIN = 8, -- distância mínima das paredes
+	FUSE_SPAWN_SEPARATION = 18, -- distância mínima entre fusíveis
+	FUSE_PICKUP_MAX_PER_MINUTE = 8,
+
+	-- Quanto o gerador precisa estar perto de um pilar para não ser sorteado
+	-- fusível em cima dele (o gerador em si é sólido).
+	GENERATOR_PADDING = 5,
+
+	-- Posições no mapa (0,0 é o centro; o piso vai de -60 a 60).
+	-- O gerador fica longe do nascimento (o jogador tem que explorar) e o
+	-- portão fica no lado oposto. Y = altura do PISO (as peças sobem a partir
+	-- daí), não do centro das peças.
+	GENERATOR_POSITION = { -34, 0, 4 },
+	EXIT_GATE_POSITION = { 0, 6.5, 57 },
+	EXIT_GATE_WIDTH = 22,
+	EXIT_GATE_HEIGHT = 13, -- cabe sob o teto (MAP_WALL_HEIGHT = 16)
+
+	-- Pontos a evitar ao sortear fusíveis: nascimento do jogador e gerador.
+	FUSE_AVOID_SPAWN = 16,
+	FUSE_AVOID_GENERATOR = 16,
+	FUSE_AVOID_GATE = 18,
+
+	-- ------------------------------------------------------------------
 	-- Diversos
 	-- ------------------------------------------------------------------
 	REMOTE_CALLS_PER_SECOND = 20,
